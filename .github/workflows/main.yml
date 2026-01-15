@@ -1,0 +1,67 @@
+name: Build PJSIP for Android
+on: 
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: 
+
+jobs:
+  build-pjsip:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android NDK
+        run: |
+          # On essaie d'abord une version stable connue (25.x)
+          NDK_PATH=$ANDROID_SDK_ROOT/ndk/25.2.9519653
+          if [ ! -d "$NDK_PATH" ]; then
+            # Si absente, on prend la plus récente disponible
+            NDK_PATH=$(ls -d $ANDROID_SDK_ROOT/ndk/* | tail -1)
+          fi
+          echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
+
+      - name: Configure PJSIP
+        run: |
+          cd app/src/main/cpp/pjproject
+          chmod +x configure-android configure aconfigure
+          
+          # Fichier de config obligatoire
+          mkdir -p pjlib/include/pj
+          echo "#define PJ_CONFIG_ANDROID 1" > pjlib/include/pj/config_site.h
+          echo "#include <pj/config_site_sample.h>" >> pjlib/include/pj/config_site.h
+          
+          ./configure-android
+
+      - name: Compile Libraries
+        run: |
+          cd app/src/main/cpp/pjproject
+          # 1. Nettoyage
+          make clean
+          # 2. Génération des dépendances
+          make dep
+          # 3. Compilation principale
+          make
+          # 4. Force la compilation du module pjsua2 (souvent ignoré par le make racine)
+          make -C pjsip/build pjsua2-lib
+
+      - name: Debug - List All Compiled Files
+        if: always()
+        run: |
+          echo "Liste des bibliothèques générées :"
+          find app/src/main/cpp/pjproject -name "*.a"
+
+      - name: Upload Static Libs as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pjsip-static-libs
+          # Chemin récursif pour attraper toutes les libs produites
+          path: app/src/main/cpp/pjproject/**/*.a
