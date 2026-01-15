@@ -21,20 +21,25 @@ jobs:
 
       - name: Setup Android NDK
         run: |
-          # On essaie d'abord une version stable connue (25.x)
+          # Priorité à une version stable (25.x) pour PJSIP
           NDK_PATH=$ANDROID_SDK_ROOT/ndk/25.2.9519653
           if [ ! -d "$NDK_PATH" ]; then
-            # Si absente, on prend la plus récente disponible
             NDK_PATH=$(ls -d $ANDROID_SDK_ROOT/ndk/* | tail -1)
           fi
           echo "ANDROID_NDK_ROOT=$NDK_PATH" >> $GITHUB_ENV
+
+      - name: Pre-Configure Check
+        # Cette étape permet de vérifier si les fichiers .in sont bien là
+        run: |
+          echo "Vérification de la présence des fichiers sources :"
+          ls -l app/src/main/cpp/pjproject/build/os-auto.mak.in || echo "ERREUR : os-auto.mak.in manquant !"
 
       - name: Configure PJSIP
         run: |
           cd app/src/main/cpp/pjproject
           chmod +x configure-android configure aconfigure
           
-          # Fichier de config obligatoire
+          # Création du fichier de config obligatoire pour Android
           mkdir -p pjlib/include/pj
           echo "#define PJ_CONFIG_ANDROID 1" > pjlib/include/pj/config_site.h
           echo "#include <pj/config_site_sample.h>" >> pjlib/include/pj/config_site.h
@@ -44,24 +49,23 @@ jobs:
       - name: Compile Libraries
         run: |
           cd app/src/main/cpp/pjproject
-          # 1. Nettoyage
+          # ORDRE : Clean -> Dep -> All
           make clean
-          # 2. Génération des dépendances
           make dep
-          # 3. Compilation principale
-          make
-          # 4. Force la compilation du module pjsua2 (souvent ignoré par le make racine)
+          # Compilation de tous les modules (all)
+          make all -j$(nproc)
+          # Force la compilation de pjsua2 (souvent ignoré par le make racine)
           make -C pjsip/build pjsua2-lib
 
       - name: Debug - List All Compiled Files
         if: always()
         run: |
-          echo "Liste des bibliothèques générées :"
+          echo "Liste des bibliothèques (.a) générées :"
           find app/src/main/cpp/pjproject -name "*.a"
 
       - name: Upload Static Libs as Artifact
         uses: actions/upload-artifact@v4
         with:
           name: pjsip-static-libs
-          # Chemin récursif pour attraper toutes les libs produites
+          # On utilise '**' pour attraper toutes les libs produites dans les sous-dossiers
           path: app/src/main/cpp/pjproject/**/*.a
